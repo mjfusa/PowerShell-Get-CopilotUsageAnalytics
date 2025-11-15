@@ -1,7 +1,7 @@
 # Microsoft Graph and Exchange Online APIs Used in Get-CopilotUsageAnalytics.ps1  
 1. Exchange Online PowerShell Module  
-Connect-ExchangeOnline - Authenticates to Exchange Online  
-Disconnect-ExchangeOnline - Closes the Exchange Online session  
+**Connect-ExchangeOnline** - Authenticates to Exchange Online  
+**Disconnect-ExchangeOnline** - Closes the Exchange Online session  
 2. Unified Audit Log API (via Search-UnifiedAuditLog cmdlet)  
 
 ### Direct Copilot Usage Tracking:  
