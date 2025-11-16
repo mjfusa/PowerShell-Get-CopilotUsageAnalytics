@@ -34,7 +34,7 @@ See [SCRIPT_DETAILS.MD](./SCRIPT_DETAILS.MD) for detailed information on the spe
 - Appropriate permissions to access SharePoint Online and Microsoft Graph API.
 ## Required Roles
 To successfully run this script, the minimum required permissions include:
-- View-Only Audit Logs role assignment  
+- [View-Only Audit Logs](https://learn.microsoft.com/en-us/exchange/view-only-audit-logs-role-exchange-2013-help) role assignment  
 
 ## Usage
 - Run the script in a PowerShell session with the necessary permissions.
