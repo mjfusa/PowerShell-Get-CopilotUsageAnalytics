@@ -73,13 +73,45 @@ NOTES:
     $startDate = (Get-Date).AddDays(-$DaysBack)
     $endDate = Get-Date
     
-    Write-Host "`n1. Microsoft Copilot Direct Usage..." -ForegroundColor Yellow
+    Write-Host "\n1. Microsoft Copilot Direct Usage..." -ForegroundColor Yellow
     
     # Get Copilot interactions
     $copilotEvents = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -Operations "CopilotInteraction" -ResultSize 5000
     
+    # Initialize array to store Copilot agent information
+    $copilotAgentNames = @()
+    
     if ($copilotEvents) {
         Write-Host "   ✓ Found $($copilotEvents.Count) Copilot interactions" -ForegroundColor Green
+        
+        # Extract agent names from Copilot interactions
+        foreach ($event in $copilotEvents) {
+            try {
+                if ($event.AuditData) {
+                    $auditObj = $event.AuditData | ConvertFrom-Json -ErrorAction SilentlyContinue
+                    if ($auditObj) {
+                        $agentName = $null
+                        # Look for agent/app identifiers in Copilot interactions
+                        if ($auditObj.AppName) { $agentName = $auditObj.AppName }
+                        elseif ($auditObj.AgentName) { $agentName = $auditObj.AgentName }
+                        elseif ($auditObj.ApplicationName) { $agentName = $auditObj.ApplicationName }
+                        elseif ($auditObj.Workload) { $agentName = "Copilot for $($auditObj.Workload)" }
+                        elseif ($auditObj.AppType) { $agentName = $auditObj.AppType }
+                        
+                        if ($agentName) {
+                            $copilotAgentNames += [PSCustomObject]@{
+                                AgentName = $agentName
+                                User = $event.UserIds
+                                Operation = $event.Operations
+                                Timestamp = $event.CreationDate
+                            }
+                        }
+                    }
+                }
+            } catch {
+                # Continue processing even if JSON parsing fails
+            }
+        }
         
         # Analyze usage patterns
         $userUsage = $copilotEvents | Group-Object UserIds | Sort-Object Count -Descending
@@ -112,11 +144,41 @@ NOTES:
     )
     
     $allBotEvents = @()
+    $botAgentNames = @()
+    
     foreach ($op in $botOperations) {
         $events = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -Operations $op -ResultSize 1000 -ErrorAction SilentlyContinue
         if ($events) {
             $allBotEvents += $events
             Write-Host "   ✓ $($op): $($events.Count) events" -ForegroundColor Green
+            
+            # Extract bot/agent names from bot operations
+            foreach ($event in $events) {
+                try {
+                    if ($event.AuditData) {
+                        $auditObj = $event.AuditData | ConvertFrom-Json -ErrorAction SilentlyContinue
+                        if ($auditObj) {
+                            $agentName = $null
+                            if ($auditObj.BotName) { $agentName = $auditObj.BotName }
+                            elseif ($auditObj.AgentName) { $agentName = $auditObj.AgentName }
+                            elseif ($auditObj.Name) { $agentName = $auditObj.Name }
+                            elseif ($auditObj.DisplayName) { $agentName = $auditObj.DisplayName }
+                            elseif ($event.ObjectId) { $agentName = $event.ObjectId }
+                            
+                            if ($agentName) {
+                                $botAgentNames += [PSCustomObject]@{
+                                    AgentName = $agentName
+                                    User = $event.UserIds
+                                    Operation = $event.Operations
+                                    Timestamp = $event.CreationDate
+                                }
+                            }
+                        }
+                    }
+                } catch {
+                    # Continue processing even if JSON parsing fails
+                }
+            }
         }
     }
     
@@ -261,7 +323,7 @@ NOTES:
             
             # Also show by user-agent combination
             $userAgentGroups = $spAgentNames | Group-Object User, AgentName | Sort-Object Count -Descending
-            Write-Host "   Top User-Agent Combinations:" -ForegroundColor Cyan
+            Write-Host "   Top User-SharePoint Agent Combinations:" -ForegroundColor Cyan
             $userAgentGroups | Select-Object -First 10 | ForEach-Object {
                 $userAgent = $_.Name -replace ', ', ' → '
                 Write-Host "     $userAgent`: $($_.Count) activities" -ForegroundColor White
@@ -277,7 +339,33 @@ NOTES:
         $spAIActivities = @()
     }
     
-    Write-Host "`n4. Advanced Analytics..." -ForegroundColor Yellow
+    # Combine all non-SharePoint agent data
+    $allCopilotAgents = @()
+    if ($copilotAgentNames) { $allCopilotAgents += $copilotAgentNames }
+    if ($botAgentNames) { $allCopilotAgents += $botAgentNames }
+    
+    # Top Copilot Agent Users (excluding SharePoint)
+    if ($allCopilotAgents -and $allCopilotAgents.Count -gt 0) {
+        Write-Host "\nTop Copilot Agent Users:" -ForegroundColor Cyan
+        $topCopilotAgentUsers = $allCopilotAgents | Group-Object User | Sort-Object Count -Descending | Select-Object -First 5
+        $topCopilotAgentUsers | ForEach-Object {
+            Write-Host "  • $($_.Name): $($_.Count) agent interactions" -ForegroundColor White
+        }
+    }
+    
+    # Top Copilot Agents and Users (excluding SharePoint)
+    if ($allCopilotAgents -and $allCopilotAgents.Count -gt 0) {
+        Write-Host "\nTop Copilot Agents and Users:" -ForegroundColor Cyan
+        $topCopilotAgentCombos = $allCopilotAgents | Group-Object AgentName, User | Sort-Object Count -Descending | Select-Object -First 5
+        $topCopilotAgentCombos | ForEach-Object {
+            $parts = $_.Name -split ', '
+            $agentName = if ($parts.Count -gt 0) { $parts[0] } else { "Unknown" }
+            $userName = if ($parts.Count -gt 1) { $parts[1] } else { "Unknown" }
+            Write-Host "  • $agentName (User: $userName): $($_.Count) interactions" -ForegroundColor White
+        }
+    }
+    
+    Write-Host "\n4. Advanced Analytics..." -ForegroundColor Yellow
     
     if ($DetailedAnalysis -and $copilotEvents) {
         Write-Host "   Analyzing Copilot interaction patterns..." -ForegroundColor Cyan

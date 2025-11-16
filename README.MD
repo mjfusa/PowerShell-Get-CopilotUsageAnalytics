@@ -17,8 +17,9 @@ This PowerShell script retrieves and analyzes Copilot usage data from SharePoint
 
 ## Example Output
 ![Top](./images/ss1.png)  
-![Middle](./images/ss2.png)  
-![End](./images/ss3.png)  
+![Middle1](./images/ss2a.png)  
+![Middle2](./images/ss3a.png)  
+![End](./images/ss4.png)  
 
 
 ## Microsoft Graph APIs Used
