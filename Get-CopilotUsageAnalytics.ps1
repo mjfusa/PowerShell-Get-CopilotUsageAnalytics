@@ -4,13 +4,125 @@
 param(
     [int]$DaysBack = 30,
     [switch]$DetailedAnalysis,
-    [switch]$ExportAll
+    [switch]$ExportAll,
+    [int]$WindowDays = 7  # Size of date window for chunked queries
 )
 
 Import-Module ExchangeOnlineManagement -Force
 
+#region Helper Functions
+
+function Invoke-WithRetry {
+    <#
+    .SYNOPSIS
+    Executes a script block with retry logic to handle transient failures and throttling.
+    
+    .DESCRIPTION
+    Retries failed operations with exponential backoff and random jitter to avoid overwhelming the service.
+    #>
+    param(
+        [Parameter(Mandatory)] 
+        [scriptblock]$Script,
+        [int]$MaxAttempts = 4,
+        [int]$BaseDelaySeconds = 3
+    )
+    
+    for ($i = 1; $i -le $MaxAttempts; $i++) {
+        try {
+            return & $Script
+        } catch {
+            $err = $_
+            # Surface the message and any server IDs if present
+            Write-Warning ("Attempt {0}/{1} failed: {2}" -f $i, $MaxAttempts, $err.Exception.Message)
+            if ($err.Exception.Data) { 
+                $err.Exception.Data | Out-String | Write-Verbose 
+            }
+            
+            if ($i -eq $MaxAttempts) { 
+                throw 
+            }
+            
+            # Exponential backoff with random jitter
+            $delay = $BaseDelaySeconds * $i + (Get-Random -Minimum 0 -Maximum 3)
+            Write-Host "   Waiting $delay seconds before retry..." -ForegroundColor Gray
+            Start-Sleep -Seconds $delay
+        }
+    }
+}
+
+function Get-AuditLogsWindowed {
+    <#
+    .SYNOPSIS
+    Retrieves audit logs in time-windowed chunks to avoid throttling and timeouts.
+    
+    .DESCRIPTION
+    Processes a large date range by breaking it into smaller windows and using retry logic.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [DateTime]$StartDate,
+        [Parameter(Mandatory)]
+        [DateTime]$EndDate,
+        [string]$Operations,
+        [string]$FreeText,
+        [int]$ResultSize = 500,
+        [int]$WindowDays = 7
+    )
+    
+    $allResults = @()
+    $cursor = $StartDate
+    
+    while ($cursor -lt $EndDate) {
+        $windowEnd = $cursor.AddDays($WindowDays)
+        if ($windowEnd -gt $EndDate) { 
+            $windowEnd = $EndDate 
+        }
+        
+        Write-Verbose ("Processing window: {0:yyyy-MM-dd} → {1:yyyy-MM-dd}" -f $cursor, $windowEnd)
+        
+        try {
+            $result = Invoke-WithRetry {
+                $params = @{
+                    StartDate = $cursor
+                    EndDate = $windowEnd
+                    ResultSize = $ResultSize
+                    ErrorAction = 'Stop'
+                }
+                
+                if ($Operations) {
+                    $params['Operations'] = $Operations
+                }
+                
+                if ($FreeText) {
+                    $params['FreeText'] = $FreeText
+                }
+                
+                Search-UnifiedAuditLog @params
+            }
+            
+            if ($result) {
+                $allResults += $result
+                Write-Verbose "   Retrieved $($result.Count) records from this window"
+            }
+        } catch {
+            Write-Warning ("Failed to retrieve data for window {0:yyyy-MM-dd} → {1:yyyy-MM-dd}: {2}" -f $cursor, $windowEnd, $_.Exception.Message)
+        }
+        
+        $cursor = $windowEnd
+        
+        # Small delay between windows to be courteous to the service
+        if ($cursor -lt $EndDate) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    
+    return $allResults
+}
+
+#endregion
+
 Write-Host "=== Microsoft Copilot & Agent Usage Analytics ===" -ForegroundColor Green
-Write-Host "Period: Last $DaysBack days" -ForegroundColor Gray
+Write-Host "Period: Last $DaysBack days (using $WindowDays-day windows)" -ForegroundColor Gray
 
 try {
     Connect-ExchangeOnline -ShowProgress $false
@@ -47,8 +159,10 @@ NOTES:
         if ($currentUser) {
             Write-Host "   Connected as: $($currentUser.UserPrincipalName)" -ForegroundColor Gray
             
-            # Test audit log access by attempting a simple query
-            $testAudit = Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date) -ResultSize 1 -ErrorAction Stop
+            # Test audit log access by attempting a simple query with retry
+            $testAudit = Invoke-WithRetry {
+                Search-UnifiedAuditLog -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date) -ResultSize 1 -ErrorAction Stop
+            }
             Write-Host "   ✓ Audit log access confirmed" -ForegroundColor Green
         } else {
             throw "Unable to determine current user connection"
@@ -75,13 +189,13 @@ NOTES:
     
     Write-Host "\n1. Microsoft Copilot Direct Usage..." -ForegroundColor Yellow
     
-    # Get Copilot interactions
-    $copilotEvents = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -Operations "CopilotInteraction" -ResultSize 5000
+    # Get Copilot interactions using windowed approach
+    $copilotEvents = Get-AuditLogsWindowed -StartDate $startDate -EndDate $endDate -Operations "CopilotInteraction" -ResultSize 5000 -WindowDays $WindowDays
     
     # Initialize array to store Copilot agent information
     $copilotAgentNames = @()
     
-    if ($copilotEvents) {
+    if ($copilotEvents -and $copilotEvents.Count -gt 0) {
         Write-Host "   ✓ Found $($copilotEvents.Count) Copilot interactions" -ForegroundColor Green
         
         # Extract agent names from Copilot interactions
@@ -133,9 +247,11 @@ NOTES:
             $copilotEvents | Export-Csv -Path $copilotPath -NoTypeInformation
             Write-Host "   ✓ Copilot interactions exported to: $copilotPath" -ForegroundColor Green
         }
+    } else {
+        Write-Host "   • No Copilot interactions found" -ForegroundColor Gray
     }
     
-    Write-Host "`n2. Bot/Agent Development Activity..." -ForegroundColor Yellow
+    Write-Host "2. Bot/Agent Development Activity..." -ForegroundColor Yellow
     
     $botOperations = @(
         "BotCreate", "BotUpdateOperation-BotPublish", "BotUpdateOperation-BotNameUpdate",
@@ -147,8 +263,11 @@ NOTES:
     $botAgentNames = @()
     
     foreach ($op in $botOperations) {
-        $events = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -Operations $op -ResultSize 1000 -ErrorAction SilentlyContinue
-        if ($events) {
+        Write-Host "   Searching for operation: $op" -ForegroundColor Gray
+        
+        $events = Get-AuditLogsWindowed -StartDate $startDate -EndDate $endDate -Operations $op -ResultSize 1000 -WindowDays $WindowDays
+        
+        if ($events -and $events.Count -gt 0) {
             $allBotEvents += $events
             Write-Host "   ✓ $($op): $($events.Count) events" -ForegroundColor Green
             
@@ -182,7 +301,7 @@ NOTES:
         }
     }
     
-    if ($allBotEvents) {
+    if ($allBotEvents -and $allBotEvents.Count -gt 0) {
         Write-Host "   Total Bot/Agent Events: $($allBotEvents.Count)" -ForegroundColor White
         
         $botUsers = $allBotEvents | Group-Object UserIds | Sort-Object Count -Descending
@@ -190,6 +309,8 @@ NOTES:
         $botUsers | ForEach-Object {
             Write-Host "     $($_.Name): $($_.Count) bot operations" -ForegroundColor White
         }
+    } else {
+        Write-Host "   • No bot/agent development activity found" -ForegroundColor Gray
     }
     
     Write-Host "`n3. SharePoint Agent Activity (Comprehensive Search)..." -ForegroundColor Yellow
@@ -203,9 +324,9 @@ NOTES:
         Write-Host "   Searching SharePoint operation: $fileOp" -ForegroundColor Gray
         
         try {
-            $events = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -Operations $fileOp -ResultSize 500 -ErrorAction SilentlyContinue
+            $events = Get-AuditLogsWindowed -StartDate $startDate -EndDate $endDate -Operations $fileOp -ResultSize 500 -WindowDays $WindowDays
             
-            if ($events) {
+            if ($events -and $events.Count -gt 0) {
                 # Filter for potential agent-related activities (expanded criteria)
                 $agentEvents = $events | Where-Object { 
                     $_.AuditData -like "*agent*" -or 
@@ -220,7 +341,7 @@ NOTES:
                     ($_.AuditData -like "*CorrelationId*" -and $_.AuditData -like "*smart*")
                 }
                 
-                if ($agentEvents) {
+                if ($agentEvents -and $agentEvents.Count -gt 0) {
                     $spAIActivities += $agentEvents
                     Write-Host "     ✓ Found $($agentEvents.Count) potential agent-related $fileOp events" -ForegroundColor Green
                 } else {
@@ -239,10 +360,12 @@ NOTES:
     
     foreach ($term in $searchTerms) {
         try {
-            # Search in SharePoint-specific operations for our keywords
-            $keywordResults = Search-UnifiedAuditLog -StartDate $startDate -EndDate $endDate -FreeText $term -ResultSize 100 -ErrorAction SilentlyContinue
+            Write-Host "     Searching for keyword: $term" -ForegroundColor DarkGray
             
-            if ($keywordResults) {
+            # Search in SharePoint-specific operations for our keywords
+            $keywordResults = Get-AuditLogsWindowed -StartDate $startDate -EndDate $endDate -FreeText $term -ResultSize 100 -WindowDays $WindowDays
+            
+            if ($keywordResults -and $keywordResults.Count -gt 0) {
                 # Filter for SharePoint operations only
                 $spKeywordResults = $keywordResults | Where-Object {
                     $_.Operations -like "*File*" -or 
@@ -252,7 +375,7 @@ NOTES:
                     $_.AuditData -like "*sharepoint*"
                 }
                 
-                if ($spKeywordResults) {
+                if ($spKeywordResults -and $spKeywordResults.Count -gt 0) {
                     $spAIActivities += $spKeywordResults
                     Write-Host "     ✓ Found $($spKeywordResults.Count) SharePoint events containing '$term'" -ForegroundColor Green
                 }
@@ -367,7 +490,7 @@ NOTES:
     
     Write-Host "\n4. Advanced Analytics..." -ForegroundColor Yellow
     
-    if ($DetailedAnalysis -and $copilotEvents) {
+    if ($DetailedAnalysis -and $copilotEvents -and $copilotEvents.Count -gt 0) {
         Write-Host "   Analyzing Copilot interaction patterns..." -ForegroundColor Cyan
         
         # Time-based analysis
@@ -513,6 +636,7 @@ NOTES:
 
 } catch {
     Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor Red
 } finally {
     Disconnect-ExchangeOnline -Confirm:$false -ErrorAction SilentlyContinue
 }

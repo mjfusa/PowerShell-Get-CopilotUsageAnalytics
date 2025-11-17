@@ -41,9 +41,16 @@ To successfully run this script, the minimum required permissions include:
 - The script will connect to SharePoint Online and Microsoft Graph API to gather Copilot usage data.
 - It will generate a report summarizing Copilot interactions, bot/agent development activities, and SharePoint agent activities.
 - Use the provided parameters to customize the analysis period and output options.  
-- Example command to run the script:
+- Example commands to run the script:  
 ```powershell
-.\Get-CopilotUsageAnalytics.ps1 -DaysBack 7 -ExportAll
+# Standard usage with default 7-day windows
+.\Get-CopilotUsageAnalytics.ps1 -DaysBack 90 -ExportAll
+
+# Smaller windows for high-volume environments
+.\Get-CopilotUsageAnalytics.ps1 -DaysBack 180 -WindowDays 3 -Verbose
+
+# Larger windows for lighter data
+.\Get-CopilotUsageAnalytics.ps1 -DaysBack 60 -WindowDays 14 -DetailedAnalysis
 ```
 
 Note: Adjust the `-DaysBack` parameter to specify the number of days for which you want to analyze Copilot usage. The `-ExportAll` switch exports all data to CSV files.  
