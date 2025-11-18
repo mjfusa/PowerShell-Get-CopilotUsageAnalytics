@@ -187,7 +187,7 @@ NOTES:
     $startDate = (Get-Date).AddDays(-$DaysBack)
     $endDate = Get-Date
     
-    Write-Host "\n1. Microsoft Copilot Direct Usage..." -ForegroundColor Yellow
+    Write-Host "1. Microsoft Copilot Direct Usage..." -ForegroundColor Yellow
     
     # Get Copilot interactions using windowed approach
     $copilotEvents = Get-AuditLogsWindowed -StartDate $startDate -EndDate $endDate -Operations "CopilotInteraction" -ResultSize 5000 -WindowDays $WindowDays
@@ -469,7 +469,7 @@ NOTES:
     
     # Top Copilot Agent Users (excluding SharePoint)
     if ($allCopilotAgents -and $allCopilotAgents.Count -gt 0) {
-        Write-Host "\nTop Copilot Agent Users:" -ForegroundColor Cyan
+        Write-Host "Top Copilot Agent Users:" -ForegroundColor Cyan
         $topCopilotAgentUsers = $allCopilotAgents | Group-Object User | Sort-Object Count -Descending | Select-Object -First 5
         $topCopilotAgentUsers | ForEach-Object {
             Write-Host "  • $($_.Name): $($_.Count) agent interactions" -ForegroundColor White
@@ -478,7 +478,7 @@ NOTES:
     
     # Top Copilot Agents and Users (excluding SharePoint)
     if ($allCopilotAgents -and $allCopilotAgents.Count -gt 0) {
-        Write-Host "\nTop Copilot Agents and Users:" -ForegroundColor Cyan
+        Write-Host "Top Copilot Agents and Users:" -ForegroundColor Cyan
         $topCopilotAgentCombos = $allCopilotAgents | Group-Object AgentName, User | Sort-Object Count -Descending | Select-Object -First 5
         $topCopilotAgentCombos | ForEach-Object {
             $parts = $_.Name -split ', '
@@ -488,7 +488,7 @@ NOTES:
         }
     }
     
-    Write-Host "\n4. Advanced Analytics..." -ForegroundColor Yellow
+    Write-Host "4. Advanced Analytics..." -ForegroundColor Yellow
     
     if ($DetailedAnalysis -and $copilotEvents -and $copilotEvents.Count -gt 0) {
         Write-Host "   Analyzing Copilot interaction patterns..." -ForegroundColor Cyan
