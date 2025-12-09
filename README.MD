@@ -1,6 +1,6 @@
 <!-- Create Readme for .\Get-CopilotUsageAnalytics .ps1 explaining analytics presented. -->
-# Copilot Usage Analytics for SharePoint Online
-This PowerShell script retrieves and analyzes Copilot usage data from SharePoint Online (SPO) using the Microsoft Graph API. It generates a report that provides insights into how Copilot is being used within your organization. Detains are provide in csv format for further analysis.
+# Copilot Agent Usage Analytics 
+This PowerShell script retrieves and analyzes Copilot agent usage data from including SharePoint agents using the Microsoft Graph API. It generates a report that provides insights into how Copilot is being used within your organization. Detains are provide in csv format for further analysis.
 <!-- provide details on analytics presented -->
 ## Features
 - Retrieves Copilot interaction logs from SharePoint Online.
